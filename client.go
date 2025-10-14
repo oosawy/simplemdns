@@ -4,14 +4,13 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"net"
 	"sync"
 
 	"github.com/miekg/dns"
 )
 
 type client struct {
-	*sockets
+	*mdnsConn
 
 	respHub *broadcaster[*dns.Msg]
 
@@ -19,14 +18,14 @@ type client struct {
 }
 
 func NewClient() (*client, error) {
-	s, err := newSockets(socketIPV4And6, socketBindZeroAddr, nil)
+	s, err := newMDNSConn(socketIPV4And6, socketBindZeroAddr, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	c := &client{
-		sockets: s,
-		respHub: newBroadcaster[*dns.Msg](),
+		mdnsConn: s,
+		respHub:  newBroadcaster[*dns.Msg](),
 	}
 
 	c.wg.Go(c.receiving)
@@ -36,7 +35,7 @@ func NewClient() (*client, error) {
 
 func (c *client) Close() error {
 	c.respHub.close()
-	err := c.sockets.close()
+	err := c.mdnsConn.close()
 	c.wg.Wait()
 	return err
 }
@@ -46,14 +45,8 @@ func (c *client) Responses() <-chan *dns.Msg {
 }
 
 func (c *client) SendQuery(msg *dns.Msg) (err error) {
-	packed, err := msg.Pack()
-	if err != nil {
-		return
-	}
-
 	logger.Debug("sending DNS message", slog.Int("questions", len(msg.Question)))
-	err = c.sockets.send(packed)
-	return
+	return c.mdnsConn.sendMsg(msg)
 }
 
 func (c *client) QueryOneShot(ctx context.Context, question dns.Question) (dns.RR, error) {
@@ -87,25 +80,13 @@ func (c *client) QueryOneShot(ctx context.Context, question dns.Question) (dns.R
 }
 
 func (c *client) receiving() {
-	buf := make([]byte, udpBufSize)
-
+	msgs := c.mdnsConn.messages()
 	for {
-		n, err := c.sockets.receive(buf)
-		if errors.Is(err, net.ErrClosed) {
+		msg, ok := <-msgs
+		if !ok {
 			return
 		}
-		if err != nil {
-			logger.Warn("error reading from UDP socket", slog.Any("error", err))
-			continue
-		}
-
-		var msg dns.Msg
-		if err := msg.Unpack(buf[:n]); err != nil {
-			logger.Warn("error unpacking DNS message", slog.Any("error", err))
-			continue
-		}
-
 		logger.Debug("received DNS message", slog.Int("answers", len(msg.Answer)))
-		c.respHub.broadcast(&msg)
+		c.respHub.broadcast(msg)
 	}
 }

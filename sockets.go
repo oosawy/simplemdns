@@ -4,7 +4,6 @@ import (
 	"errors"
 	"log/slog"
 	"net"
-	"sync"
 
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
@@ -20,6 +19,9 @@ var (
 
 	zeroAddrUDP4 = &net.UDPAddr{IP: net.IPv4zero, Port: 0}
 	zeroAddrUDP6 = &net.UDPAddr{IP: net.IPv6unspecified, Port: 0}
+
+	mdnsZeroAddrUDP4 = &net.UDPAddr{IP: net.IPv4zero, Port: mdnsPort}
+	mdnsZeroAddrUDP6 = &net.UDPAddr{IP: net.IPv6unspecified, Port: mdnsPort}
 )
 
 type socketIPVersion int
@@ -39,11 +41,8 @@ const (
 )
 
 type sockets struct {
-	wg       sync.WaitGroup
-	conn4    *net.UDPConn
-	conn6    *net.UDPConn
-	recvCh   chan []byte
-	recvOnce sync.Once
+	conn4 *net.UDPConn
+	conn6 *net.UDPConn
 }
 
 func socketAddrs(strategy socketBindStrategy) (udp4addr, udp6addr *net.UDPAddr) {
@@ -52,8 +51,8 @@ func socketAddrs(strategy socketBindStrategy) (udp4addr, udp6addr *net.UDPAddr) 
 		udp4addr = zeroAddrUDP4
 		udp6addr = zeroAddrUDP6
 	case socketBindMDNSPort:
-		udp4addr = &net.UDPAddr{IP: net.IPv4zero, Port: mdnsPort}
-		udp6addr = &net.UDPAddr{IP: net.IPv6unspecified, Port: mdnsPort}
+		udp4addr = mdnsZeroAddrUDP4
+		udp6addr = mdnsZeroAddrUDP6
 	case socketBindMDNSGaddr:
 		udp4addr = mdnsGaddrUDP4
 		udp6addr = mdnsGaddrUDP6
@@ -90,7 +89,6 @@ func newSockets(ip socketIPVersion, bind socketBindStrategy, ifaces []net.Interf
 	}
 
 	var err4, err6 error
-
 	if ip&socketIPV4 != 0 {
 		s.conn4, err4 = net.ListenUDP("udp4", udp4addr)
 		if err4 == nil {
@@ -167,84 +165,5 @@ func (s *sockets) close() error {
 		s.conn6.Close()
 		s.conn6 = nil
 	}
-	if s.recvCh != nil {
-		s.wg.Wait()
-		close(s.recvCh)
-		s.recvCh = nil
-	}
 	return nil
-}
-
-func (s *sockets) send(buf []byte) error {
-	var err4, err6 error
-
-	// TODO: send multicast
-	if s.conn4 != nil {
-		_, err4 = s.conn4.WriteToUDP(buf, mdnsGaddrUDP4)
-	}
-	if s.conn6 != nil {
-		_, err6 = s.conn6.WriteToUDP(buf, mdnsGaddrUDP6)
-	}
-
-	if err4 != nil && err6 != nil {
-		return errors.Join(err4, err6)
-	}
-	if err4 != nil {
-		logger.Warn("error sending DNS message via udp4", slog.Any("error", err4))
-	}
-	if err6 != nil {
-		logger.Warn("error sending DNS message via udp6", slog.Any("error", err6))
-	}
-
-	return nil
-}
-
-func (s *sockets) receive(b []byte) (n int, err error) {
-	var bufLock sync.Mutex
-
-	s.recvOnce.Do(func() {
-		s.recvCh = make(chan []byte)
-		if s.conn4 != nil {
-			s.wg.Go(func() {
-				buf := make([]byte, len(b))
-				for {
-					n, _, err := s.conn4.ReadFromUDP(buf)
-					if errors.Is(err, net.ErrClosed) {
-						return
-					}
-					if err != nil {
-						logger.Warn("error receiving DNS message via udp4", slog.Any("error", err))
-						return
-					}
-					s.recvCh <- buf[:n]
-					bufLock.Lock()
-				}
-			})
-		}
-		if s.conn6 != nil {
-			s.wg.Go(func() {
-				buf := make([]byte, len(b))
-				for {
-					n, _, err := s.conn6.ReadFromUDP(buf)
-					if errors.Is(err, net.ErrClosed) {
-						return
-					}
-					if err != nil {
-						logger.Warn("error receiving DNS message via udp6", slog.Any("error", err))
-						return
-					}
-					s.recvCh <- buf[:n]
-					bufLock.Lock()
-				}
-			})
-		}
-	})
-
-	data, ok := <-s.recvCh
-	if !ok {
-		return 0, net.ErrClosed
-	}
-	n = copy(b, data)
-	bufLock.Unlock()
-	return n, nil
 }
