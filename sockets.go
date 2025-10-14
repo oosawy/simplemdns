@@ -48,7 +48,7 @@ func (s socketIPVersion) String() string {
 type socketBindStrategy int
 
 const (
-	socketBindZeroAddr socketBindStrategy = iota
+	socketBindZeroAddr socketBindStrategy = iota + 1
 	socketBindMDNSPort
 	socketBindMDNSGaddr
 )

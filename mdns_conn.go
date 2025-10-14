@@ -13,8 +13,6 @@ type mdnsConn struct {
 	*sockets
 
 	wg        sync.WaitGroup
-	conn4     *net.UDPConn
-	conn6     *net.UDPConn
 	msgCh     chan *dns.Msg
 	closeOnce sync.Once
 }
@@ -75,7 +73,11 @@ func (mconn *mdnsConn) recvLoop(conn *net.UDPConn) {
 		}
 
 		logger.Debug("received DNS message", slog.Int("questions", len(msg.Question)), slog.Int("answers", len(msg.Answer)), slog.Any("names", dnsNames(&msg)))
-		mconn.msgCh <- &msg
+		select {
+		case mconn.msgCh <- &msg:
+		default:
+			logger.Debug("dropping DNS message due to full channel")
+		}
 	}
 }
 

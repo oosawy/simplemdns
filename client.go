@@ -3,6 +3,7 @@ package simplemdns
 import (
 	"context"
 	"errors"
+	"net"
 	"sync"
 
 	"github.com/miekg/dns"
@@ -16,8 +17,39 @@ type client struct {
 	wg sync.WaitGroup
 }
 
+type ClientOptions struct {
+	Interfaces   []net.Interface
+	BindStrategy socketBindStrategy
+	IPVersion    socketIPVersion
+}
+
+func (o *ClientOptions) withDefaults() *ClientOptions {
+	if o == nil {
+		return &ClientOptions{
+			BindStrategy: socketBindZeroAddr,
+			IPVersion:    socketIPV4And6,
+			Interfaces:   nil,
+		}
+	}
+
+	c := *o
+	if c.BindStrategy == 0 {
+		c.BindStrategy = socketBindZeroAddr
+	}
+	if c.IPVersion == 0 {
+		c.IPVersion = socketIPV4And6
+	}
+	return &c
+}
+
 func NewClient() (*client, error) {
-	s, err := newMDNSConn(socketIPV4And6, socketBindZeroAddr, nil)
+	return NewClientWithOptions(nil)
+}
+
+func NewClientWithOptions(opts *ClientOptions) (*client, error) {
+	o := opts.withDefaults()
+
+	s, err := newMDNSConn(o.IPVersion, o.BindStrategy, o.Interfaces)
 	if err != nil {
 		return nil, err
 	}
