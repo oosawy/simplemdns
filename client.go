@@ -3,7 +3,6 @@ package simplemdns
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"sync"
 
 	"github.com/miekg/dns"
@@ -45,7 +44,6 @@ func (c *client) Responses() <-chan *dns.Msg {
 }
 
 func (c *client) SendQuery(msg *dns.Msg) (err error) {
-	logger.Debug("sending DNS message", slog.Int("questions", len(msg.Question)))
 	return c.mdnsConn.sendMsg(msg)
 }
 
@@ -86,7 +84,6 @@ func (c *client) receiving() {
 		if !ok {
 			return
 		}
-		logger.Debug("received DNS message", slog.Int("answers", len(msg.Answer)))
 		c.respHub.broadcast(msg)
 	}
 }

@@ -74,6 +74,7 @@ func (mconn *mdnsConn) recvLoop(conn *net.UDPConn) {
 			continue
 		}
 
+		logger.Debug("received DNS message", slog.Int("questions", len(msg.Question)), slog.Int("answers", len(msg.Answer)), slog.Any("names", dnsNames(&msg)))
 		mconn.msgCh <- &msg
 	}
 }
@@ -82,31 +83,32 @@ func (mconn *mdnsConn) messages() <-chan *dns.Msg {
 	return mconn.msgCh
 }
 
-func (mconn *mdnsConn) sendPacked(buf []byte) error {
-	var err4, err6 error
-	// TODO: send multicast
-	if mconn.conn4 != nil {
-		_, err4 = mconn.conn4.WriteToUDP(buf, mdnsGaddrUDP4)
-	}
-	if mconn.conn6 != nil {
-		_, err6 = mconn.conn6.WriteToUDP(buf, mdnsGaddrUDP6)
-	}
-	if err4 != nil && err6 != nil {
-		return errors.Join(err4, err6)
-	}
-	if err4 != nil {
-		logger.Warn("error sending DNS message via udp4", slog.Any("error", err4))
-	}
-	if err6 != nil {
-		logger.Warn("error sending DNS message via udp6", slog.Any("error", err6))
-	}
-	return nil
-}
-
 func (mconn *mdnsConn) sendMsg(m *dns.Msg) error {
+	logger.Debug("sending DNS message", slog.Int("questions", len(m.Question)), slog.Any("names", dnsNames(m)))
 	packed, err := m.Pack()
 	if err != nil {
 		return err
 	}
-	return mconn.sendPacked(packed)
+	return mconn.multicast(packed)
+}
+
+func dnsNames(m *dns.Msg) []string {
+	names := make(map[string]struct{})
+	for _, q := range m.Question {
+		names[q.Name] = struct{}{}
+	}
+	for _, rr := range m.Answer {
+		names[rr.Header().Name] = struct{}{}
+	}
+	for _, rr := range m.Ns {
+		names[rr.Header().Name] = struct{}{}
+	}
+	for _, rr := range m.Extra {
+		names[rr.Header().Name] = struct{}{}
+	}
+	var uniq []string
+	for name := range names {
+		uniq = append(uniq, name)
+	}
+	return uniq
 }
