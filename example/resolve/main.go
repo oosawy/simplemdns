@@ -33,9 +33,9 @@ func main() {
 		Qclass: dns.ClassINET,
 	}
 	fmt.Printf("Querying for %s\n", question.String())
-	rr, err := client.QueryOneShot(context.Background(), question)
+	rr, err := client.QueryFirst(context.Background(), question)
 	if err != nil {
-		fmt.Println("QueryOneShot error:", err.Error())
+		fmt.Println("QueryFirst error:", err.Error())
 		return
 	}
 	fmt.Println(rr.String())
