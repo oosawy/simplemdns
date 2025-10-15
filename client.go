@@ -51,6 +51,10 @@ type client struct {
 	t transport.Transport
 
 	closeOnce sync.Once
+
+	subscribers     []chan *dns.Msg
+	subMu           sync.Mutex
+	broadcasterOnce sync.Once
 }
 
 // NewClient creates a new client using provided ClientOptions. Accepts zero or
@@ -80,13 +84,51 @@ func NewClient(opts ...ClientOptions) (*client, error) {
 func (c *client) Close() (err error) {
 	c.closeOnce.Do(func() {
 		err = c.t.Close()
+
+		c.subMu.Lock()
+		for _, sub := range c.subscribers {
+			close(sub)
+		}
+		c.subscribers = nil
+		c.subMu.Unlock()
 	})
 	return
 }
 
-// FIXME: it needs to fan-out the messages to multiple consumers.
-func (c *client) Messages() <-chan *dns.Msg {
-	return c.t.Messages()
+// Subscribe returns a new subscriber channel that will be closed when the client is closed.
+func (c *client) Subscribe() <-chan *dns.Msg {
+	ch := make(chan *dns.Msg, 32)
+
+	c.subMu.Lock()
+	c.subscribers = append(c.subscribers, ch)
+	c.subMu.Unlock()
+
+	c.broadcasterOnce.Do(func() {
+		go func() {
+			for msg := range c.t.Messages() {
+				c.subMu.Lock()
+				subs := make([]chan *dns.Msg, len(c.subscribers))
+				copy(subs, c.subscribers)
+				c.subMu.Unlock()
+				for _, sub := range subs {
+					select {
+					case sub <- msg:
+					default:
+						// drop if subscriber channel is full
+					}
+				}
+			}
+			// when t.Messages() is closed, close all subscribers
+			c.subMu.Lock()
+			for _, sub := range c.subscribers {
+				close(sub)
+			}
+			c.subscribers = nil
+			c.subMu.Unlock()
+		}()
+	})
+
+	return ch
 }
 
 // TODO: accept ch to send responses, and a context to cancel
@@ -102,7 +144,7 @@ func (c *client) QueryFirst(ctx context.Context, question dns.Question) (dns.RR,
 	msg := new(dns.Msg)
 	msg.Question = []dns.Question{question}
 
-	msgCh := c.Messages()
+	msgCh := c.Subscribe()
 
 	if err := c.Query(msg); err != nil {
 		return nil, err
