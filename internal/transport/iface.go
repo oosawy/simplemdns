@@ -19,10 +19,10 @@ func multicastInterfaces() ([]net.Interface, error) {
 	return mifaces, nil
 }
 
-func interfaceIPVersion(iface *net.Interface) (hasIPv4, hasIPv6 bool, err error) {
+func interfaceSupports(iface *net.Interface, v IPVersion) (supports bool, err error) {
 	addrs, err := iface.Addrs()
 	if err != nil {
-		return false, false, err
+		return false, err
 	}
 
 	for _, a := range addrs {
@@ -38,15 +38,14 @@ func interfaceIPVersion(iface *net.Interface) (hasIPv4, hasIPv6 bool, err error)
 		if ip == nil {
 			continue
 		}
-		if ip.To4() != nil {
-			hasIPv4 = true
-		} else if ip.To16() != nil {
-			hasIPv6 = true
+
+		if v == IPv4 && ip.To4() != nil {
+			return true, nil
 		}
-		if hasIPv4 && hasIPv6 {
-			return true, true, nil
+		if v == IPv6 && ip.To16() != nil && ip.To4() == nil {
+			return true, nil
 		}
 	}
 
-	return hasIPv4, hasIPv6, nil
+	return
 }

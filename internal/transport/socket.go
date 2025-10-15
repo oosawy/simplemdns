@@ -97,13 +97,13 @@ func (s *socket) newUDP4Conn(addr *net.UDPAddr) error {
 	var joined int
 
 	for _, iface := range s.ifaces {
+		supports, _ := interfaceSupports(&iface, IPv4)
+		if !supports {
+			s.ifacesNoIPv4[iface.Index] = struct{}{}
+			continue
+		}
+
 		if err := v4conn.JoinGroup(&iface, mdnsGaddrUDP4); err != nil {
-			// silently ignore join errors for interfaces without IPv4 address
-			hasIPv4, _, _ := interfaceIPVersion(&iface)
-			if !hasIPv4 {
-				s.ifacesNoIPv4[iface.Index] = struct{}{}
-				continue
-			}
 			logger.Debug("failed to join ipv4 multicast group; skipping", slog.String("interface", iface.Name), slog.Any("error", err))
 		} else {
 			joined++
@@ -141,13 +141,13 @@ func (s *socket) newUDP6Conn(addr *net.UDPAddr) error {
 	var joined int
 
 	for _, iface := range s.ifaces {
+		supports, _ := interfaceSupports(&iface, IPv6)
+		if !supports {
+			s.ifacesNoIPv6[iface.Index] = struct{}{}
+			continue
+		}
+
 		if err := v6conn.JoinGroup(&iface, mdnsGaddrUDP6); err != nil {
-			// silently ignore join errors for interfaces without IPv6 address
-			_, hasIPv6, _ := interfaceIPVersion(&iface)
-			if !hasIPv6 {
-				s.ifacesNoIPv6[iface.Index] = struct{}{}
-				continue
-			}
 			logger.Debug("failed to join ipv6 multicast group; skipping", slog.String("interface", iface.Name), slog.Any("error", err))
 		} else {
 			joined++
